@@ -40,13 +40,14 @@ double get_cpu_load() {
 
     double total_user = 0, total_system = 0, total_idle = 0;
 
+    processor_cpu_load_info_t cpu_info = (processor_cpu_load_info_t)info;
     for (natural_t i = 0; i < count; i++) {
-        total_user += info[i].cpu_ticks[CPU_STATE_USER];
-        total_system += info[i].cpu_ticks[CPU_STATE_SYSTEM];
-        total_idle += info[i].cpu_ticks[CPU_STATE_IDLE];
+        total_user += cpu_info[i].cpu_ticks[CPU_STATE_USER];
+        total_system += cpu_info[i].cpu_ticks[CPU_STATE_SYSTEM];
+        total_idle += cpu_info[i].cpu_ticks[CPU_STATE_IDLE];
     }
 
-    mach_vm_deallocate(mach_task_self(), (mach_vm_address_t)info, count * sizeof(processor_info_data_t));
+    mach_vm_deallocate(mach_task_self(), (vm_address_t)info, count * sizeof(processor_info_data_t));
 
     return (total_user + total_system) / (total_user + total_system + total_idle);
 }
