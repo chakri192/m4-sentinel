@@ -1,4 +1,4 @@
-# m4-sentinel 🖥️
+# m4-sentinel 
 
 A lightweight system monitor daemon for **macOS on Apple Silicon (M-series)**. Written in C11, it continuously polls thermal pressure and CPU load using native macOS APIs, logs timestamped stats to a file, and fires a system notification when pressure thresholds are exceeded.
 
