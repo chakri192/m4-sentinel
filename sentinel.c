@@ -66,7 +66,9 @@ void check_thermal_pressure() {
     log_stats(pressure_level, cpu_load);
 
     if (pressure_level > 0) {
-        osascript -e 'display notification "Thermal pressure detected: Level %d" with title "Sentinel Alert"' &> /dev/null
+        char command[256];
+        snprintf(command, sizeof(command), "osascript -e 'display notification \"Thermal pressure detected: Level %d\" with title \"Sentinel Alert\"'", pressure_level);
+        system(command);
     }
 }
 
