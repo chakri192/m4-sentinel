@@ -7,12 +7,13 @@
 #include <mach/mach.h>
 #include <mach/mach_host.h>
 #include <os/log.h>
-#include <mach/mach_vm.h> // Added this line
+#include <mach/mach_vm.h> // Ensure this is present
 #include <mach/mach_init.h> // Ensure this is present
 
-#define LOG_FILE "/Users/chakri/Documents/portfolio/m4-sentinel/sentinel.log"
+#define LOG_FILE "sentinel.log"
 
 void log_stats(int pressure_level, double cpu_load) {
+    printf("Attempting to log to sentinel.log...\n");
     FILE *log_file = fopen(LOG_FILE, "a");
     if (log_file) {
         time_t now = time(NULL);
@@ -20,6 +21,8 @@ void log_stats(int pressure_level, double cpu_load) {
         ts[strlen(ts) - 1] = '\0';
         fprintf(log_file, "%s - Pressure: %d, CPU: %.2f\n", ts, pressure_level, cpu_load);
         fclose(log_file);
+    } else {
+        perror("Error opening log file");
     }
 }
 
