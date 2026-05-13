@@ -2,27 +2,23 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #include <sys/sysctl.h>
 #include <mach/mach.h>
 #include <mach/mach_host.h>
-#include <mach/mach_init.h>
-#include <mach/mach_vm.h>
+#include <os/log.h>
 
 #define LOG_FILE "/Users/chakri/Documents/portfolio/m4-sentinel/sentinel.log"
 
 void log_stats(int pressure_level, double cpu_load) {
-    time_t now = time(NULL);
-    char *timestamp = ctime(&now);
-    timestamp[strlen(timestamp) - 1] = '\0'; // Remove newline character
-
     FILE *log_file = fopen(LOG_FILE, "a");
-    if (log_file == NULL) {
-        os_log(OS_LOG_DEFAULT, "Failed to open log file: %s", LOG_FILE);
-        return;
+    if (log_file) {
+        time_t now = time(NULL);
+        char *ts = ctime(&now);
+        ts[strlen(ts) - 1] = '\0';
+        fprintf(log_file, "%s - Pressure: %d, CPU: %.2f\n", ts, pressure_level, cpu_load);
+        fclose(log_file);
     }
-
-    fprintf(log_file, "%s - Pressure Level: %d, CPU Load: %.2f\n", timestamp, pressure_level, cpu_load);
-    fclose(log_file);
 }
 
 double get_cpu_load() {
