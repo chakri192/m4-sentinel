@@ -5,6 +5,8 @@
 #include <sys/sysctl.h>
 #include <mach/mach.h>
 #include <mach/mach_host.h>
+#include <mach/mach_init.h>
+#include <mach/mach_vm.h>
 #include <os/log.h>
 
 #define LOG_FILE "~/Library/Logs/m4_sentinel.log"
@@ -25,7 +27,7 @@ void log_stats(int pressure_level, double cpu_load) {
 }
 
 double get_cpu_load() {
-    mach_host_t host = mach_host_self();
+    host_t host = mach_host_self();
     natural_t count;
     processor_info_array_t info;
     mach_msg_type_number_t info_count;
