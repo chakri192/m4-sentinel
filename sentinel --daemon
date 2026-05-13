@@ -1,0 +1,6 @@
+
+To stop the daemon, find its PID using `ps aux | grep sentinel` and kill it with `kill -9 <PID>`.
+
+## License
+
+MIT License
