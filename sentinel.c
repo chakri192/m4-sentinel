@@ -7,9 +7,8 @@
 #include <mach/mach_host.h>
 #include <mach/mach_init.h>
 #include <mach/mach_vm.h>
-#include <os/log.h>
 
-#define LOG_FILE "~/Library/Logs/m4_sentinel.log"
+#define LOG_FILE "/Users/chakri/Documents/portfolio/m4-sentinel/sentinel.log"
 
 void log_stats(int pressure_level, double cpu_load) {
     time_t now = time(NULL);
@@ -68,11 +67,10 @@ void check_thermal_pressure() {
 
     log_stats(pressure_level, cpu_load);
 
-    if (pressure_level > 0) {
-        char command[256];
-        snprintf(command, sizeof(command), "osascript -e 'display notification \"Thermal pressure detected: Level %d\" with title \"Sentinel Alert\"'", pressure_level);
-        system(command);
-    }
+    // Always display notification regardless of pressure level
+    char command[256];
+    snprintf(command, sizeof(command), "osascript -e 'display notification \"Thermal pressure detected: Level %d\" with title \"Sentinel Alert\"'", pressure_level);
+    system(command);
 }
 
 void run_daemon() {
