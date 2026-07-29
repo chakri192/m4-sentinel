@@ -1,3 +1,6 @@
 .aider*
 sentinel
 sentinel.log
+
+# macOS
+.DS_Store
