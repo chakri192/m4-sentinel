@@ -14,7 +14,7 @@
 
 void log_stats(int pressure_level, double cpu_load) {
     printf("--- Sentinel Update: Pressure %d, CPU %.2f ---\n", pressure_level, cpu_load);
-    
+
     FILE *log_file = fopen(LOG_FILE, "a");
     if (log_file) {
         time_t now = time(NULL);
@@ -47,7 +47,7 @@ double get_cpu_load() {
     }
 
     mach_vm_deallocate(mach_task_self(), (vm_address_t)info, info_count * sizeof(int));
-    
+
     double used = total_user + total_system;
     return used / (used + total_idle);
 }
