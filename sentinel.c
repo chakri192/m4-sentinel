@@ -28,14 +28,18 @@ void log_stats(int pressure_level, double cpu_load) {
     }
 }
 
-double get_cpu_load() {
+// Reads the *cumulative* (since-boot) busy and idle CPU tick totals.
+// Returns 0 on success, -1 on failure. host_processor_info counters are
+// monotonic totals, so a single reading is a since-boot average — the
+// caller must diff two samples to get an instantaneous load.
+static int read_cpu_ticks(double *out_used, double *out_idle) {
     host_t host = mach_host_self();
     natural_t count;
     processor_info_array_t info;
     mach_msg_type_number_t info_count;
 
     kern_return_t kr = host_processor_info(host, PROCESSOR_CPU_LOAD_INFO, &count, &info, &info_count);
-    if (kr != KERN_SUCCESS) return -1.0;
+    if (kr != KERN_SUCCESS) return -1;
 
     double total_user = 0, total_system = 0, total_idle = 0;
     processor_cpu_load_info_t cpu_info = (processor_cpu_load_info_t)info;
@@ -46,16 +50,37 @@ double get_cpu_load() {
         total_idle   += cpu_info[i].cpu_ticks[CPU_STATE_IDLE];
     }
 
-    mach_vm_deallocate(mach_task_self(), (vm_address_t)info, info_count * sizeof(int));
+    mach_vm_deallocate(mach_task_self(), (vm_address_t)info, info_count * sizeof(integer_t));
 
-    double used = total_user + total_system;
-    return used / (used + total_idle);
+    *out_used = total_user + total_system;
+    *out_idle = total_idle;
+    return 0;
+}
+
+// Instantaneous CPU utilisation (0..1) measured over a short window, by
+// diffing two tick samples. A single host_processor_info reading only
+// yields the average since boot, which barely moves — this returns the
+// real current load.
+double get_cpu_load() {
+    double used1, idle1, used2, idle2;
+    if (read_cpu_ticks(&used1, &idle1) != 0) return -1.0;
+    usleep(200000);  // 200 ms sampling window
+    if (read_cpu_ticks(&used2, &idle2) != 0) return -1.0;
+
+    double used_delta = used2 - used1;
+    double idle_delta = idle2 - idle1;
+    double total_delta = used_delta + idle_delta;
+    if (total_delta <= 0) return 0.0;  // no ticks elapsed
+    return used_delta / total_delta;
 }
 
 void check_system() {
     int pressure_level = 0;
     size_t len = sizeof(pressure_level);
-    sysctlbyname("vm.pressure_level", &pressure_level, &len, NULL, 0);
+    if (sysctlbyname("vm.pressure_level", &pressure_level, &len, NULL, 0) != 0) {
+        perror("sysctl vm.pressure_level");
+        pressure_level = 0;  // treat an unreadable sensor as "no pressure"
+    }
 
     double cpu_load = get_cpu_load();
     log_stats(pressure_level, cpu_load);
@@ -70,6 +95,12 @@ void check_system() {
 void run_daemon() {
     if (fork() != 0) exit(0);
     setsid();
+    // Detach stdio: after setsid() the controlling terminal is gone, so
+    // printf/perror would otherwise write to a defunct fd. Send them to
+    // /dev/null (stdout/stderr) — the log file is written separately.
+    freopen("/dev/null", "r", stdin);
+    freopen("/dev/null", "w", stdout);
+    freopen("/dev/null", "w", stderr);
     while (1) {
         check_system();
         sleep(60);
