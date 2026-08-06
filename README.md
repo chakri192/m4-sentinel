@@ -4,9 +4,9 @@
 
 # m4-sentinel
 
-**A C daemon that watches what Apple Silicon is actually doing.**
+**A system monitoring daemon for Apple Silicon, written in C11.**
 
-Native Mach, sysctl, and notify calls. No dependencies, no runtime — one binary and a log file.
+Reads CPU load, thermal pressure, and memory pressure through native Mach, notify, and sysctl interfaces. No dependencies and no runtime — a single binary and a log file.
 
 <p>
   <img alt="Language" src="https://img.shields.io/badge/C-C11-1c1c1e?style=flat-square&logo=c&logoColor=A8B9CC" />
@@ -19,81 +19,117 @@ Native Mach, sysctl, and notify calls. No dependencies, no runtime — one binar
 
 ---
 
-```bash
-make
-./sentinel              # one reading, printed and logged
-./sentinel --daemon     # detach, sample every 60s
+## Overview
+
+m4-sentinel samples three system metrics on a fixed interval, appends a timestamped record to a log file, and raises a system notification when either pressure level crosses its threshold. It is written against the native APIs directly, with no supporting libraries.
+
+## Requirements
+
+macOS on Apple Silicon, and the Xcode Command Line Tools (`xcode-select --install`). Full Xcode is not required.
+
+## Installation
+
+```sh
+git clone https://github.com/chakri192/m4-sentinel.git
+cd m4-sentinel && make
 ```
 
-That's the whole interface, plus `--log <path>`.
+The `Makefile` compiles with `-std=c11 -Os -Wall -Wextra` and links CoreFoundation and IOKit.
 
-## Thermal and memory are two different sensors
+## Usage
 
-They get conflated constantly, so this reads them separately and labels them separately.
+| Invocation | Behaviour |
+|---|---|
+| `./sentinel` | Single reading; prints to stdout, appends one record, exits |
+| `./sentinel --daemon` | Detaches and samples every 60 seconds |
+| `./sentinel --log <path>` | Redirects the log; combines with `--daemon` |
 
-**Thermal** comes from the notify(3) key `libkern` publishes as `kOSThermalNotificationPressureLevelName`. Register a check token once, then `notify_get_state()` per pass. Levels run Nominal · Moderate · Heavy · Trapping · Sleeping.
+Terminate the daemon with `pkill sentinel`.
 
-**Memory** comes from `sysctlbyname("kern.memorystatus_vm_pressure_level", …)`, reporting the same constants dispatch exposes as `NORMAL` (1), `WARN` (2), `CRITICAL` (4). That sysctl is the polling equivalent of `DISPATCH_SOURCE_TYPE_MEMORYPRESSURE` — the dispatch source is the better API in general, but it delivers on a queue, and a program whose whole structure is `check, sleep(60)` has no run loop to deliver to.
+## Metrics
 
-> **Historical note.** Earlier versions read `sysctlbyname("vm.pressure_level", …)` and printed it as `Thermal:`. That was wrong twice: the OID doesn't exist on modern macOS, so the read failed every pass and fell back to `0`; and even where it existed it reported *memory* pressure, never thermal.
+### Thermal and memory pressure are distinct
 
-Alerts are **edge-triggered** — they fire when a level first rises past its threshold (thermal ≥ Moderate, memory ≥ WARN) and again only if it climbs higher. A level-triggered check would re-post an identical notification every 60 seconds for as long as the condition lasted. An unreadable sensor logs as `Unavailable (-1)` and never alerts.
+These two are frequently conflated. m4-sentinel reads them from separate sources and reports them under separate labels.
 
-## Why the CPU load takes two readings
+**Thermal pressure** is obtained from the notify(3) key published by `libkern` as `kOSThermalNotificationPressureLevelName` (`com.apple.system.thermalpressurelevel`). A check token is registered once, then queried with `notify_get_state()` on each pass.
 
-`host_processor_info` returns **cumulative** tick counters per core, monotonically increasing since boot. Sample once and divide and you get the machine's average utilisation over its entire uptime — on a Mac awake for a week, that number is both stable and useless.
+| Value | Level |
+|---|---|
+| 0 | `kOSThermalPressureLevelNominal` |
+| 1 | `kOSThermalPressureLevelModerate` |
+| 2 | `kOSThermalPressureLevelHeavy` |
+| 3 | `kOSThermalPressureLevelTrapping` |
+| 4 | `kOSThermalPressureLevelSleeping` |
 
-So `get_cpu_load()` takes two samples 200 ms apart and divides the deltas:
+**Memory pressure** is obtained from `sysctlbyname("kern.memorystatus_vm_pressure_level", …)`, which reports the constants exposed by dispatch as `DISPATCH_MEMORYPRESSURE_NORMAL` (1), `WARN` (2), and `CRITICAL` (4). This sysctl is the polling equivalent of `DISPATCH_SOURCE_TYPE_MEMORYPRESSURE`. The dispatch source is generally the better interface, but it delivers events on a queue, and a program structured as `check, sleep(60)` has no run loop to receive them.
+
+> **Historical note.** Earlier revisions read `sysctlbyname("vm.pressure_level", …)` and reported the result as `Thermal:`. This was incorrect in two respects: the OID does not exist on current macOS, so the read failed on every pass and the value defaulted to `0`; and where it did once exist, it reported memory pressure rather than thermal pressure.
+
+### CPU load requires two samples
+
+`host_processor_info` returns cumulative per-core tick counters — user, system, and idle — which increase monotonically since boot. A single reading therefore yields the machine's average utilisation across its entire uptime, a figure that is both stable and uninformative.
+
+`get_cpu_load()` takes two samples 200 ms apart and divides the deltas:
 
 ```
 load = Δ(user + system) / Δ(user + system + idle)
 ```
 
-summed across every core, performance and efficiency together. The kernel allocates that array on each call, so it's handed back with `mach_vm_deallocate` — skip that and a daemon sampling every 60 seconds leaks for as long as it runs.
+summed across every core, which on an M-series processor includes both performance and efficiency cores. The kernel allocates the counter array on each call, so it is released with `mach_vm_deallocate`; omitting this causes a steady leak in a long-running daemon.
 
-## Running it
+## Alerting
 
-```bash
-git clone https://github.com/chakri192/m4-sentinel.git
-cd m4-sentinel && make
-```
+Alerts are edge-triggered: a notification is raised when a level first rises to or beyond its threshold, and again only if it rises further. A level-triggered check would repost an identical notification every 60 seconds for the duration of the condition.
 
-Needs the Xcode Command Line Tools. Stop the daemon with `pkill sentinel`.
+| Sensor | Threshold |
+|---|---|
+| Thermal | `>= kOSThermalPressureLevelModerate` |
+| Memory | `>= DISPATCH_MEMORYPRESSURE_WARN` |
 
-Logs to `~/Library/Logs/m4_sentinel.log`, with `$HOME` expanded at runtime:
+A sensor that cannot be read is logged as `Unavailable (-1)` and never triggers an alert.
+
+## Logging
+
+Records are written to `~/Library/Logs/m4_sentinel.log`, with `$HOME` expanded at runtime and the directory created if absent.
 
 ```
 Thu Aug  6 01:27:19 2026 | Thermal: Nominal (0) | Memory: Normal (1) | CPU: 23.50%
 ```
 
-`--log <path>` (or `SENTINEL_LOG`) redirects it; `--log` wins if both are set. Relative paths resolve against the invoking cwd **before** anything forks, so `--log ./sentinel.log --daemon` lands where you ran it rather than following the daemon to `/`.
+Timestamps use `ctime()`; each level is printed as both name and raw value. The log is appended and never rotated — clear it with `: > ~/Library/Logs/m4_sentinel.log`.
 
-## How the daemon detaches
+`--log <path>` or `SENTINEL_LOG` redirects it, with `--log` taking precedence. Relative paths are resolved against the invoking working directory before any fork occurs, so `--log ./sentinel.log --daemon` writes where the command was issued rather than following the daemon to `/`. If `$HOME` is unset, the path falls back to `/tmp/m4_sentinel.log` with a notice on stderr.
+
+## Daemonisation
 
 ```c
-fflush(NULL);               // don't hand the child a copy of buffered output
-if (fork() != 0) exit(0);   // parent leaves; child is orphaned to init
+fflush(NULL);               // avoid duplicating buffered output into the child
+if (fork() != 0) exit(0);   // the parent exits; the child is reparented to init
 setsid();                   // new session, no controlling terminal
-chdir("/");                 // stop pinning the launch directory
+chdir("/");                 // release the launch directory
 freopen("/dev/null", ...)   // stdin, stdout, stderr
 ```
 
-Three of those four are easy to skip.
+Three of these four steps are commonly omitted.
 
-`fflush(NULL)` first: when stdout is a pipe rather than a terminal it's fully buffered, so anything printed before the fork is still in the buffer — and `fork()` copies it into the child, which prints it a second time. Pipe the startup banner into `cat` and you'll see it doubled.
+`fflush(NULL)` is required because when stdout is a pipe or file rather than a terminal it is fully buffered. Any output produced before the fork remains in the buffer, and `fork()` copies that buffer into the child, which emits it a second time.
 
-`chdir("/")` because a process holds a reference to its working directory. A daemon launched from a USB volume keeps that volume busy for as long as it runs. Which is exactly why the log path must be resolved to an absolute path *before* this point.
+`chdir("/")` matters because a process holds a reference to its working directory. A daemon started from a removable volume or a directory intended for deletion keeps that directory in use for its lifetime. This is also why the log path must be resolved to an absolute path beforehand.
 
-`freopen` last: after `setsid()` the controlling terminal is gone, and every `printf` in the program is writing to a descriptor that leads nowhere.
+`freopen` is last because after `setsid()` the controlling terminal no longer exists, and every `printf` and `perror` in the program would otherwise write to a file descriptor that leads nowhere.
 
-## Layout
+## Project structure
 
 ```
 m4-sentinel/
 ├── sentinel.c     read_cpu_ticks · get_cpu_load · check_system · run_daemon
-└── Makefile       gcc -std=c11 -Os, links CoreFoundation + IOKit
+└── Makefile       gcc -std=c11 -Os, links CoreFoundation and IOKit
 ```
 
 ## Contributors
 
-[chakri192](https://github.com/chakri192) · [aider](https://github.com/Aider-AI/aider)
+| | |
+|---|---|
+| [chakri192](https://github.com/chakri192) | Author |
+| [aider](https://github.com/Aider-AI/aider) | AI pair programmer |
